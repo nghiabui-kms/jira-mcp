@@ -1,0 +1,29 @@
+{
+  "name": "jira-mcp-remote",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Remote MCP server for Jira Cloud (issues, transitions, sprints, worklogs)",
+  "type": "module",
+  "engines": {
+    "node": ">=20.6"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node --env-file=.env dist/index.js",
+    "dev": "tsx watch --env-file=.env src/index.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.test.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.17.0",
+    "express": "^4.21.2",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.14.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.2.7"
+  }
+}

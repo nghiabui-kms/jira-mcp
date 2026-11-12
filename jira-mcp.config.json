@@ -1,0 +1,21 @@
+{
+  "defaultProjectKey": "AUTOKAT",
+  "defaultBoardId": 2092,
+  "fields": {
+    "storyPoints": ["Story Points", "Story point estimate"],
+    "sprint": ["Sprint"],
+    "team": ["Team"],
+    "automationStatus": ["Automation Status"],
+    "workType": ["Work type"],
+    "flagged": ["Flagged"]
+  },
+  "listFields": ["storyPoints", "sprint", "components", "automationStatus", "workType"],
+  "blocked": {
+    "statuses": ["Refinement"],
+    "automationStatus": ["Blocked"],
+    "flagged": true,
+    "blockedByLink": true
+  },
+  "cycleTime": { "start": ["In Progress"], "end": ["Done", "Closed"] },
+  "templatesFile": "./templates.json"
+}

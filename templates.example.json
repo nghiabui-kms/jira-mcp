@@ -1,0 +1,29 @@
+{
+  "autokat-base": {
+    "project": "AUTOKAT",
+    "assignee": "me",
+    "labels": ["autokat"]
+  },
+  "ifs-script": {
+    "extends": "autokat-base",
+    "issueType": "Story",
+    "labels": ["ifs"],
+    "fields": {
+      "workType": "New implementation",
+      "automationStatus": "Ready for Automation",
+      "storyPoints": 3
+    },
+    "description": "## Scope\n- Test case(s): \n- Module / screen: \n\n## Test data\n- \n\n## Steps to automate\n1. \n\n## Acceptance criteria\n- Script runs green on the nightly suite\n- Test objects use stable locators\n- Reviewed in a merge request\n\n## Notes\n"
+  },
+  "maintenance": {
+    "extends": "autokat-base",
+    "issueType": "Task",
+    "labels": ["maintenance"],
+    "fields": {
+      "workType": "Maintenance",
+      "automationStatus": "Maintenance",
+      "storyPoints": 1
+    },
+    "description": "## Failing script(s)\n- \n\n## Symptom\n- Failing since: \n- Error / screenshot: \n\n## Root cause\n- \n\n## Fix\n- \n\n## Verification\n- Re-run link: \n"
+  }
+}
