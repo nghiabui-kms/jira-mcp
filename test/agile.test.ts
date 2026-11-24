@@ -46,6 +46,23 @@ describe("links", () => {
     const { call: call2 } = await connect(testContext());
     expect(await call2("remove_issue_link", { linkId: "77" })).toEqual({ removed: "77", was: "A-1 blocks OTHER-2" });
   });
+
+  it("delete_worklog checks ALLOWED_PROJECTS, then deletes and reports what was removed", async () => {
+    const path = "/rest/api/3/issue/OTHER-1/worklog/55";
+    const w = { author: { displayName: "Nghia" }, started: "2026-11-10T09:00:00.000+0700", timeSpent: "1h" };
+    const calls = fakeJira({ [`GET ${path}`]: w, [`DELETE ${path}`]: undefined });
+    const { call } = await connect(testContext({ config: { ALLOWED_PROJECTS: ["A"] } }));
+    await expect(call("delete_worklog", { issueKey: "OTHER-1", worklogId: "55" })).rejects.toThrow(/ALLOWED_PROJECTS/);
+    expect(calls.some((c) => c.method === "DELETE")).toBe(false);
+
+    const { call: call2 } = await connect(testContext());
+    expect(await call2("delete_worklog", { issueKey: "OTHER-1", worklogId: "55" })).toEqual({
+      issueKey: "OTHER-1",
+      deleted: "55",
+      was: { author: "Nghia", started: w.started, timeSpent: "1h" },
+    });
+    expect(calls.some((c) => c.method === "DELETE")).toBe(true);
+  });
 });
 
 describe("backlog", () => {

@@ -7,7 +7,7 @@ Giai đoạn hiện tại: **API token + chạy local + Cloudflare tunnel** đ�
 
 | Nhóm | Đọc | Ghi |
 |---|---|---|
-| Issues | `get_myself`, `find_users`, `list_projects`, `search_issues`, `get_issue`, `get_transitions`, `get_worklogs`, `get_issue_history`, `list_link_types` | `create_issue`, `update_issue`, `add_comment`, `transition_issue`, `add_worklog`, `link_issues`, `remove_issue_link` ⚠ |
+| Issues | `get_myself`, `find_users`, `list_projects`, `search_issues`, `get_issue`, `get_transitions`, `get_worklogs`, `get_issue_history`, `list_link_types` | `create_issue`, `update_issue`, `add_comment`, `transition_issue`, `add_worklog`, `delete_worklog` ⚠, `link_issues`, `remove_issue_link` ⚠ |
 | Fields & metadata | `list_fields`, `get_create_meta`, `list_project_components`, `list_project_versions` | |
 | Templates | `list_templates` | (`create_issue` với `template`) |
 | Backlog & sprints | `list_boards`, `list_sprints`, `get_sprint_issues`, `get_backlog`, `list_epics` | `move_issues_to_sprint`, `move_issues_to_backlog`, `rank_issues`, `create_sprint`, `update_sprint`, `start_sprint`, `close_sprint` ⚠ |
@@ -15,7 +15,7 @@ Giai đoạn hiện tại: **API token + chạy local + Cloudflare tunnel** đ�
 | Bulk | | `bulk_update_issues` |
 | Filters | `list_filters`, `run_filter` | |
 
-⚠ = có `destructiveHint`. Không có tool xóa issue, sprint, board hay project (`remove_issue_link` chỉ xóa link).
+⚠ = có `destructiveHint`. Không có tool xóa issue, sprint, board hay project (`remove_issue_link` chỉ xóa link, `delete_worklog` chỉ xóa một worklog).
 
 - `search_issues`, `get_issue`, `get_sprint_issues`, `get_backlog`, `list_epics`, `run_filter` trả thêm các field trong `listFields` của config (story points, sprint, components, automation status, work type) và `flagged`. Tham số `fields` (tên hoặc ID) để lấy thêm field khác.
 - `create_issue` / `update_issue` nhận `fields` theo tên hiển thị, key trong config, hoặc ID: `{"Story Points": 3, "automationStatus": "Automated"}`. `extraFields` vẫn là raw passthrough.

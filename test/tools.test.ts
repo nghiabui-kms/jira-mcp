@@ -38,6 +38,7 @@ const WRITE_TOOLS = [
   "transition_issue",
   "move_issues_to_sprint",
   "add_worklog",
+  "delete_worklog",
   "rank_issues",
   "move_issues_to_backlog",
   "link_issues",
@@ -54,7 +55,7 @@ describe("tool registration", () => {
     const { client } = await connect(testContext());
     const names = (await client.listTools()).tools.map((t) => t.name).sort();
     expect(names).toEqual([...READ_TOOLS, ...WRITE_TOOLS].sort());
-    expect(names).toHaveLength(41);
+    expect(names).toHaveLength(42);
   });
 
   it("READ_ONLY=true hides every write tool", async () => {
@@ -67,7 +68,7 @@ describe("tool registration", () => {
   it("marks destructive tools", async () => {
     const { client } = await connect(testContext());
     const destructive = (await client.listTools()).tools.filter((t) => t.annotations?.destructiveHint).map((t) => t.name);
-    expect(destructive.sort()).toEqual(["close_sprint", "remove_issue_link"]);
+    expect(destructive.sort()).toEqual(["close_sprint", "delete_worklog", "remove_issue_link"]);
   });
 });
 
