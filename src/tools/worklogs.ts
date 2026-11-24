@@ -63,6 +63,29 @@ export function registerWorklogTools(server: McpServer, ctx: ToolContext): void 
       return { issueKey, worklogId: res.id, timeSpent: res.timeSpent, started: res.started };
     },
   });
+
+  defineTool(server, ctx, {
+    name: "delete_worklog",
+    title: "Delete worklog",
+    description:
+      "Delete one worklog of an issue (get the id from get_worklogs). " +
+      "Jira auto-adjusts the remaining estimate. Cannot be undone.",
+    input: { issueKey, worklogId: z.string().regex(/^\d+$/, "Numeric worklog id") },
+    write: true,
+    idempotent: true,
+    destructive: true,
+    run: async ({ issueKey, worklogId }) => {
+      assertWritable(ctx, [issueKey]);
+      const path = `/rest/api/3/issue/${issueKey}/worklog/${worklogId}`;
+      const w = await jira.get<Record<string, any>>(path);
+      await jira.delete(path);
+      return {
+        issueKey,
+        deleted: worklogId,
+        was: { author: w.author?.displayName, started: w.started, timeSpent: w.timeSpent },
+      };
+    },
+  });
 }
 
 function parseDate(value: string): Date {
