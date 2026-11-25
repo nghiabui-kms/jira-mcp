@@ -36,6 +36,8 @@ const WRITE_TOOLS = [
   "create_issue",
   "update_issue",
   "add_comment",
+  "edit_comment",
+  "delete_comment",
   "transition_issue",
   "move_issues_to_sprint",
   "add_worklog",
@@ -56,7 +58,7 @@ describe("tool registration", () => {
     const { client } = await connect(testContext());
     const names = (await client.listTools()).tools.map((t) => t.name).sort();
     expect(names).toEqual([...READ_TOOLS, ...WRITE_TOOLS].sort());
-    expect(names).toHaveLength(42);
+    expect(names).toHaveLength(44);
   });
 
   it("READ_ONLY=true hides every write tool", async () => {
@@ -69,7 +71,7 @@ describe("tool registration", () => {
   it("marks destructive tools", async () => {
     const { client } = await connect(testContext());
     const destructive = (await client.listTools()).tools.filter((t) => t.annotations?.destructiveHint).map((t) => t.name);
-    expect(destructive.sort()).toEqual(["close_sprint", "delete_worklog", "remove_issue_link"]);
+    expect(destructive.sort()).toEqual(["close_sprint", "delete_comment", "delete_worklog", "remove_issue_link"]);
   });
 });
 
@@ -345,7 +347,7 @@ describe("add_comment attachments", () => {
   it("rejects a placeholder without a matching file before uploading", async () => {
     const calls = fakeJira({});
     const { call } = await connect(testContext());
-    await expect(call("add_comment", { issueKey: "AUTOKAT-1", body: "x\n{{attachment:2}}", clipboardImage: true })).rejects.toThrow(/no matching file/);
+    await expect(call("add_comment", { issueKey: "AUTOKAT-1", body: "x\n{{attachment:2}}", clipboardImage: true })).rejects.toThrow(/no match/);
     expect(calls).toHaveLength(0);
   });
 
@@ -366,5 +368,65 @@ describe("add_comment attachments", () => {
     await call("add_comment", { issueKey: "AUTOKAT-1", body: "x", attachments: [file("shot.png")] });
     const doc = (calls.at(-1)!.body as { body: { content: unknown[] } }).body;
     expect(doc.content[1]).toMatchObject({ type: "paragraph", content: [{ text: "shot.png", marks: [{ type: "link" }] }] });
+  });
+});
+
+describe("edit_comment / delete_comment", () => {
+  const PATH = "/rest/api/3/issue/AUTOKAT-1/comment/700";
+  const img = (id: string) => ({ type: "mediaSingle", attrs: { layout: "center" }, content: [{ type: "media", attrs: { type: "file", id, collection: "" } }] });
+  const para = (text: string) => ({ type: "paragraph", content: [{ type: "text", text }] });
+  const OLD = { type: "doc", version: 1, content: [para("old text"), img("a"), para("more"), img("b")] };
+
+  it("replaces the text, places a kept image, drops a removed one", async () => {
+    const calls = fakeJira({ [`GET ${PATH}`]: { body: OLD }, [`PUT ${PATH}`]: {} });
+    const { call } = await connect(testContext());
+    const res = await call("edit_comment", {
+      issueKey: "AUTOKAT-1",
+      commentId: "700",
+      body: "new top\n{{existing:2}}\nnew bottom",
+      removeExisting: [1],
+    });
+    expect(res).toEqual({ issueKey: "AUTOKAT-1", commentId: "700", keptImages: 1 });
+    expect((calls.at(-1)!.body as { body: unknown }).body).toEqual({
+      type: "doc",
+      version: 1,
+      content: [para("new top"), img("b"), para("new bottom")],
+    });
+  });
+
+  it("keeps unplaced existing images at the end", async () => {
+    const calls = fakeJira({ [`GET ${PATH}`]: { body: OLD }, [`PUT ${PATH}`]: {} });
+    const { call } = await connect(testContext());
+    await call("edit_comment", { issueKey: "AUTOKAT-1", commentId: "700", body: "only text" });
+    const doc = (calls.at(-1)!.body as { body: { content: unknown[] } }).body;
+    expect(doc.content).toEqual([para("only text"), img("a"), img("b")]);
+  });
+
+  it("refuses to edit when images sit inside a table or list", async () => {
+    const nested = { type: "doc", version: 1, content: [{ type: "bulletList", content: [{ type: "listItem", content: [img("a")] }] }] };
+    const calls = fakeJira({ [`GET ${PATH}`]: { body: nested } });
+    const { call } = await connect(testContext());
+    await expect(call("edit_comment", { issueKey: "AUTOKAT-1", commentId: "700", body: "x" })).rejects.toThrow(/inside a table/);
+    expect(calls.map((c) => c.method)).toEqual(["GET"]);
+  });
+
+  it("rejects {{existing:N}} past the comment's images", async () => {
+    fakeJira({ [`GET ${PATH}`]: { body: OLD } });
+    const { call } = await connect(testContext());
+    await expect(call("edit_comment", { issueKey: "AUTOKAT-1", commentId: "700", body: "{{existing:3}}" })).rejects.toThrow(/no match/);
+  });
+
+  it("delete_comment checks ALLOWED_PROJECTS, then deletes and reports what was removed", async () => {
+    const calls = fakeJira({
+      [`GET ${PATH}`]: { author: { displayName: "Nghia" }, created: "2026-11-25T10:00:00.000+0700", body: OLD },
+      [`DELETE ${PATH}`]: undefined,
+    });
+    const blocked = await connect(testContext({ config: { ALLOWED_PROJECTS: ["OTHER"] } }));
+    await expect(blocked.call("delete_comment", { issueKey: "AUTOKAT-1", commentId: "700" })).rejects.toThrow(/ALLOWED_PROJECTS/);
+    expect(calls).toHaveLength(0);
+    const { call } = await connect(testContext());
+    const res = await call("delete_comment", { issueKey: "AUTOKAT-1", commentId: "700" });
+    expect(res).toMatchObject({ issueKey: "AUTOKAT-1", deleted: "700", was: { author: "Nghia" } });
+    expect(calls.map((c) => c.method)).toEqual(["GET", "DELETE"]);
   });
 });

@@ -3,7 +3,7 @@ import { openAsBlob } from "node:fs";
 import { realpath } from "node:fs/promises";
 import { basename, isAbsolute, relative, sep } from "node:path";
 import { z } from "zod";
-import { textToAdf, type AdfNode } from "../jira/adf.js";
+import { adfToShortText, textToAdf, type AdfNode } from "../jira/adf.js";
 import { JiraError } from "../jira/client.js";
 import { LIST_FIELDS, simplifyIssue, simplifyIssueDetail, type RawIssue } from "../jira/format.js";
 import { merge, resolveTemplate } from "../templates.js";
@@ -50,6 +50,9 @@ async function resolveAttachmentPaths(ctx: ToolContext, paths: string[]): Promis
     }),
   );
 }
+
+const countMedia = (n: AdfNode): number =>
+  (n.type === "media" || n.type === "mediaInline" ? 1 : 0) + (n.content ?? []).reduce((s, c) => s + countMedia(c), 0);
 
 export function registerIssueTools(server: McpServer, ctx: ToolContext): void {
   const { jira } = ctx;
@@ -281,65 +284,150 @@ export function registerIssueTools(server: McpServer, ctx: ToolContext): void {
     },
   });
 
+  const commentInput = {
+    attachments: z.array(z.string().min(1)).max(10).optional().describe("Absolute file paths, max 10"),
+    clipboardImage: z.boolean().optional().describe("Attach the image currently on the clipboard (Windows)"),
+  };
+  const ATTACH_HELP =
+    "`attachments`: file paths on the server (inside ATTACHMENTS_DIR) uploaded to the issue and shown in the " +
+    "comment, images inline. `clipboardImage`: true attaches the image on the user's clipboard; use it when the " +
+    "user pasted a screenshot into the chat and wants it on the issue (pasting leaves it on the clipboard). " +
+    "Place a file inside the text with a line containing only {{attachment:N}} (N = 1-based position: " +
+    "`attachments` in order, then the clipboard image); files not placed go at the end.";
+
+  /**
+   * Builds the comment ADF: Markdown split at {{attachment:N}} / {{existing:N}} lines, new files uploaded first.
+   * `existing` are image blocks kept from an edited comment; unplaced ones go at the end unless dropped.
+   */
+  async function commentDoc(
+    issueKey: string,
+    a: { body?: string; attachments?: string[]; clipboardImage?: boolean },
+    existing: AdfNode[] = [],
+    dropExisting: number[] = [],
+  ) {
+    // Every 3 entries: Markdown, placeholder kind, placeholder number (the last Markdown has none).
+    const parts = (a.body ?? "").replace(/\r\n?/g, "\n").split(/^[ \t]*\{\{(attachment|existing):(\d+)\}\}[ \t]*$/m);
+    const refs: Array<{ kind: string; n: number }> = [];
+    for (let i = 1; i < parts.length; i += 3) refs.push({ kind: parts[i], n: +parts[i + 1] });
+    const count = (a.attachments?.length ?? 0) + (a.clipboardImage ? 1 : 0);
+    for (const r of refs) {
+      const max = r.kind === "existing" ? existing.length : count;
+      if (r.n < 1 || r.n > max) {
+        throw new Error(`{{${r.kind}:${r.n}}} has no match (${max} ${r.kind === "existing" ? "images in the comment" : "files attached"}).`);
+      }
+    }
+
+    const files = a.attachments?.length ? await resolveAttachmentPaths(ctx, a.attachments) : [];
+    const form = new FormData();
+    for (const f of files) form.append("file", await openAsBlob(f), basename(f));
+    if (a.clipboardImage) {
+      const stamp = new Date().toISOString().replace(/\D/g, "").slice(0, 14);
+      form.append("file", await readClipboardPng(), `clipboard-${stamp}.png`);
+    }
+    const uploaded: Array<{ id: string; filename: string }> = [];
+    const nodes: AdfNode[] = [];
+    if (form.has("file")) {
+      // Jira returns the attachments in upload order, which is what {{attachment:N}} counts.
+      const res = await jira.post<Array<{ id: string; filename: string; mimeType: string }>>(
+        `/rest/api/3/issue/${issueKey}/attachments`,
+        form,
+      );
+      for (const att of res) {
+        uploaded.push({ id: att.id, filename: att.filename });
+        nodes.push(await attachmentNode(att));
+      }
+    }
+
+    const content: AdfNode[] = [];
+    for (let i = 0; i < parts.length; i += 3) {
+      content.push(...textToAdf(parts[i]).content!);
+      const r = refs[i / 3];
+      if (r) content.push((r.kind === "existing" ? existing : nodes)[r.n - 1]);
+    }
+    const unplaced = (kind: string, list: AdfNode[], skip: number[] = []) =>
+      list.filter((_, i) => !skip.includes(i + 1) && !refs.some((r) => r.kind === kind && r.n === i + 1));
+    content.push(...unplaced("existing", existing, dropExisting), ...unplaced("attachment", nodes));
+    if (!content.length) throw new Error("Nothing to post: the comment would be empty.");
+    return { doc: { type: "doc", version: 1, content } as AdfNode, uploaded };
+  }
+
   defineTool(server, ctx, {
     name: "add_comment",
     title: "Add comment",
-    description:
-      "Add a comment to an issue (plain text with simple Markdown). `attachments`: file paths on the server " +
-      "(inside ATTACHMENTS_DIR) uploaded to the issue and shown in the comment, images inline. " +
-      "`clipboardImage`: true attaches the image on the user's clipboard; use it when the user pasted a screenshot " +
-      "into the chat and wants it on the issue (pasting leaves it on the clipboard). " +
-      "Place a file inside the text with a line containing only {{attachment:N}} (N = 1-based position: " +
-      "`attachments` in order, then the clipboard image); files not placed go at the end.",
+    description: "Add a comment to an issue (plain text with simple Markdown). " + ATTACH_HELP,
     input: {
       issueKey,
       body: z.string().optional().describe("Comment text; may be empty when attaching files"),
-      attachments: z.array(z.string().min(1)).max(10).optional().describe("Absolute file paths, max 10"),
-      clipboardImage: z.boolean().optional().describe("Attach the image currently on the clipboard (Windows)"),
+      ...commentInput,
     },
     write: true,
     idempotent: false,
-    run: async ({ issueKey, body = "", attachments, clipboardImage }) => {
+    run: async ({ issueKey, body, attachments, clipboardImage }) => {
       assertWritable(ctx, [issueKey]);
-      if (!body.trim() && !attachments?.length && !clipboardImage) {
-        throw new Error("Nothing to post: pass body, attachments or clipboardImage.");
-      }
-      // Odd entries are placeholder numbers, even entries the Markdown around them.
-      const parts = body.replace(/\r\n?/g, "\n").split(/^[ \t]*\{\{attachment:(\d+)\}\}[ \t]*$/m);
-      const count = (attachments?.length ?? 0) + (clipboardImage ? 1 : 0);
-      const bad = parts.filter((p, i) => i % 2 && (+p < 1 || +p > count));
-      if (bad.length) throw new Error(`{{attachment:${bad[0]}}} has no matching file (${count} attached).`);
-      const files = attachments?.length ? await resolveAttachmentPaths(ctx, attachments) : [];
-      const form = new FormData();
-      for (const f of files) form.append("file", await openAsBlob(f), basename(f));
-      if (clipboardImage) {
-        const stamp = new Date().toISOString().replace(/\D/g, "").slice(0, 14);
-        form.append("file", await readClipboardPng(), `clipboard-${stamp}.png`);
-      }
-      const uploaded: Array<{ id: string; filename: string }> = [];
-      const nodes: AdfNode[] = [];
-      if (form.has("file")) {
-        // Jira returns the attachments in upload order, which is what {{attachment:N}} counts.
-        const res = await jira.post<Array<{ id: string; filename: string; mimeType: string }>>(
-          `/rest/api/3/issue/${issueKey}/attachments`,
-          form,
-        );
-        for (const a of res) {
-          uploaded.push({ id: a.id, filename: a.filename });
-          nodes.push(await attachmentNode(a));
-        }
-      }
-      const placed = new Set(parts.filter((_, i) => i % 2).map(Number));
-      const doc: AdfNode = {
-        type: "doc",
-        version: 1,
-        content: [
-          ...parts.flatMap((p, i) => (i % 2 ? [nodes[+p - 1]] : textToAdf(p).content!)),
-          ...nodes.filter((_, i) => !placed.has(i + 1)),
-        ],
-      };
+      const { doc, uploaded } = await commentDoc(issueKey, { body, attachments, clipboardImage });
       const res = await jira.post<{ id: string }>(`/rest/api/3/issue/${issueKey}/comment`, { body: doc });
       return { issueKey, commentId: res.id, ...(uploaded.length ? { attachments: uploaded } : {}) };
+    },
+  });
+
+  defineTool(server, ctx, {
+    name: "edit_comment",
+    title: "Edit comment",
+    description:
+      "Replace the text of a comment (comment id from get_issue). Images already in the comment are kept: they are " +
+      "numbered 1.. in the order of the [attachment] markers in get_issue; put one at a spot with a line " +
+      "containing only {{existing:N}}, drop it with removeExisting, otherwise it stays at the end. " +
+      ATTACH_HELP,
+    input: {
+      issueKey,
+      commentId: z.string().regex(/^\d+$/, "Numeric comment id"),
+      body: z.string().describe("New comment text (Markdown); replaces the old text"),
+      removeExisting: z.array(z.number().int().min(1)).optional().describe("Existing images (1-based) to remove"),
+      ...commentInput,
+    },
+    write: true,
+    idempotent: false,
+    run: async ({ issueKey, commentId, body, removeExisting, attachments, clipboardImage }) => {
+      assertWritable(ctx, [issueKey]);
+      const path = `/rest/api/3/issue/${issueKey}/comment/${commentId}`;
+      const old = await jira.get<{ body: AdfNode }>(path);
+      const existing = (old.body.content ?? []).filter((n) => n.type === "mediaSingle" || n.type === "mediaGroup");
+      // Images nested in tables/lists/panels cannot be carried over from Markdown, so refuse rather than lose them.
+      if (countMedia(old.body) !== existing.reduce((s, n) => s + countMedia(n), 0)) {
+        throw new Error("This comment has images inside a table, list or panel; edit it in Jira so they are not lost.");
+      }
+      const { doc, uploaded } = await commentDoc(issueKey, { body, attachments, clipboardImage }, existing, removeExisting);
+      await jira.put(path, { body: doc });
+      const removed = new Set((removeExisting ?? []).filter((n) => n <= existing.length)).size;
+      return {
+        issueKey,
+        commentId,
+        keptImages: existing.length - removed,
+        ...(uploaded.length ? { attachments: uploaded } : {}),
+      };
+    },
+  });
+
+  defineTool(server, ctx, {
+    name: "delete_comment",
+    title: "Delete comment",
+    description:
+      "Delete one comment of an issue (comment id from get_issue). Cannot be undone. " +
+      "Files it showed stay attached to the issue.",
+    input: { issueKey, commentId: z.string().regex(/^\d+$/, "Numeric comment id") },
+    write: true,
+    idempotent: true,
+    destructive: true,
+    run: async ({ issueKey, commentId }) => {
+      assertWritable(ctx, [issueKey]);
+      const path = `/rest/api/3/issue/${issueKey}/comment/${commentId}`;
+      const c = await jira.get<Record<string, any>>(path);
+      await jira.delete(path);
+      return {
+        issueKey,
+        deleted: commentId,
+        was: { author: c.author?.displayName, created: c.created, body: adfToShortText(c.body, 300) },
+      };
     },
   });
 

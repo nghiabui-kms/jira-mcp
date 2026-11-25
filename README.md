@@ -7,7 +7,7 @@ Giai đoạn hiện tại: **API token + chạy local + Cloudflare tunnel** đ�
 
 | Nhóm | Đọc | Ghi |
 |---|---|---|
-| Issues | `get_myself`, `find_users`, `list_projects`, `search_issues`, `get_issue`, `get_transitions`, `get_worklogs`, `get_issue_history`, `list_link_types` | `create_issue`, `update_issue`, `add_comment`, `transition_issue`, `add_worklog`, `delete_worklog` ⚠, `link_issues`, `remove_issue_link` ⚠ |
+| Issues | `get_myself`, `find_users`, `list_projects`, `search_issues`, `get_issue`, `get_transitions`, `get_worklogs`, `get_issue_history`, `list_link_types` | `create_issue`, `update_issue`, `add_comment`, `edit_comment`, `delete_comment` ⚠, `transition_issue`, `add_worklog`, `delete_worklog` ⚠, `link_issues`, `remove_issue_link` ⚠ |
 | Fields & metadata | `list_fields`, `get_create_meta`, `list_project_components`, `list_project_versions` | |
 | Templates | `list_templates` | (`create_issue` với `template`) |
 | Backlog & sprints | `list_boards`, `list_sprints`, `get_sprint_issues`, `get_backlog`, `list_epics` | `move_issues_to_sprint`, `move_issues_to_backlog`, `rank_issues`, `create_sprint`, `update_sprint`, `start_sprint`, `close_sprint` ⚠ |
@@ -15,7 +15,7 @@ Giai đoạn hiện tại: **API token + chạy local + Cloudflare tunnel** đ�
 | Bulk | | `bulk_update_issues` |
 | Filters | `list_filters`, `run_filter` | |
 
-⚠ = có `destructiveHint`. Không có tool xóa issue, sprint, board hay project (`remove_issue_link` chỉ xóa link, `delete_worklog` chỉ xóa một worklog).
+⚠ = có `destructiveHint`. Không có tool xóa issue, sprint, board hay project (`remove_issue_link` chỉ xóa link, `delete_worklog` chỉ xóa một worklog, `delete_comment` chỉ xóa một comment).
 
 - `search_issues`, `get_issue`, `get_sprint_issues`, `get_backlog`, `list_epics`, `run_filter` trả thêm các field trong `listFields` của config (story points, sprint, components, automation status, work type) và `flagged`. Tham số `fields` (tên hoặc ID) để lấy thêm field khác.
 - `create_issue` / `update_issue` nhận `fields` theo tên hiển thị, key trong config, hoặc ID: `{"Story Points": 3, "automationStatus": "Automated"}`. `extraFields` vẫn là raw passthrough.
@@ -28,6 +28,8 @@ Giai đoạn hiện tại: **API token + chạy local + Cloudflare tunnel** đ�
 - `add_comment` nhận thêm `attachments`: danh sách đường dẫn file trên máy chạy server (tối đa 10). File được upload lên issue; ảnh hiện ngay trong comment, file khác hiện dạng thẻ file. Chỉ đọc được file nằm trong `ATTACHMENTS_DIR` (.env); không đặt thì tính năng này tắt.
 - `add_comment` với `clipboardImage: true` đính kèm ảnh đang có trong clipboard (Windows). Dùng khi chụp màn hình (Win+Shift+S), dán vào chat Claude rồi bảo "comment ảnh này vào AUTOKAT-123": dán xong thì ảnh vẫn còn trong clipboard. Không cần `ATTACHMENTS_DIR`; `body` có thể bỏ trống. Lưu ý: server lấy ảnh **đang** có trong clipboard, nên nếu đã copy thứ khác sau khi dán thì sẽ ra ảnh khác.
 - Đặt ảnh/file vào giữa comment: viết một dòng chỉ chứa `{{attachment:N}}` trong `body` (N đếm từ 1: các file trong `attachments` theo thứ tự, rồi tới ảnh clipboard). File không được đặt chỗ thì nằm cuối comment.
+- `edit_comment` thay toàn bộ chữ của comment (id lấy từ `get_issue`), nhận `attachments` / `clipboardImage` / `{{attachment:N}}` như `add_comment`. Ảnh đã có trong comment được giữ lại: đánh số 1.. theo thứ tự các dấu `[attachment]` trong `get_issue`, đặt lại chỗ bằng dòng `{{existing:N}}`, bỏ bằng `removeExisting: [N]`, không nhắc tới thì nằm cuối. Comment có ảnh nằm trong bảng/list/panel thì bị từ chối để không mất ảnh. Định dạng khác Markdown không biểu diễn được (panel, màu chữ…) sẽ mất khi sửa.
+- `delete_comment` xóa một comment, không hoàn tác được; file nó hiện vẫn còn trong attachment của issue.
 
 ## An toàn khi ghi
 
