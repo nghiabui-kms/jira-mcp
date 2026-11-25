@@ -1,9 +1,13 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { openAsBlob } from "node:fs";
+import { realpath } from "node:fs/promises";
+import { basename, isAbsolute, relative, sep } from "node:path";
 import { z } from "zod";
-import { textToAdf } from "../jira/adf.js";
+import { textToAdf, type AdfNode } from "../jira/adf.js";
 import { JiraError } from "../jira/client.js";
 import { LIST_FIELDS, simplifyIssue, simplifyIssueDetail, type RawIssue } from "../jira/format.js";
 import { merge, resolveTemplate } from "../templates.js";
+import { readClipboardPng } from "../util/clipboard.js";
 import {
   assertWritable,
   defineTool,
@@ -26,6 +30,26 @@ const namedFields = z
 const MARKDOWN_HELP =
   "Markdown: # headings, **bold**, *italic*, `code`, [text](url), - lists (2-space nesting), 1. lists, " +
   "| a | b | tables, ``` code blocks, mentions @[accountId].";
+
+/** Attachments are read from the server's disk, so only ATTACHMENTS_DIR is reachable (no .env, keys, etc.). */
+async function resolveAttachmentPaths(ctx: ToolContext, paths: string[]): Promise<string[]> {
+  const dir = ctx.config.ATTACHMENTS_DIR;
+  if (!dir) throw new Error("Attachments are disabled: set ATTACHMENTS_DIR in the server .env.");
+  const root = await realpath(dir);
+  return Promise.all(
+    paths.map(async (p) => {
+      // realpath also resolves symlinks, so a link inside the folder cannot point outside it.
+      const real = await realpath(p).catch(() => {
+        throw new Error(`Attachment not found: ${p}`);
+      });
+      const rel = relative(root, real);
+      if (!rel || rel === ".." || rel.startsWith(".." + sep) || isAbsolute(rel)) {
+        throw new Error(`Attachment ${p} is outside ATTACHMENTS_DIR (${dir}).`);
+      }
+      return real;
+    }),
+  );
+}
 
 export function registerIssueTools(server: McpServer, ctx: ToolContext): void {
   const { jira } = ctx;
@@ -260,18 +284,62 @@ export function registerIssueTools(server: McpServer, ctx: ToolContext): void {
   defineTool(server, ctx, {
     name: "add_comment",
     title: "Add comment",
-    description: "Add a comment to an issue (plain text with simple Markdown).",
-    input: { issueKey, body: z.string().min(1) },
+    description:
+      "Add a comment to an issue (plain text with simple Markdown). `attachments`: file paths on the server " +
+      "(inside ATTACHMENTS_DIR) uploaded to the issue and shown in the comment, images inline. " +
+      "`clipboardImage`: true attaches the image on the user's clipboard; use it when the user pasted a screenshot " +
+      "into the chat and wants it on the issue (pasting leaves it on the clipboard).",
+    input: {
+      issueKey,
+      body: z.string().optional().describe("Comment text; may be empty when attaching files"),
+      attachments: z.array(z.string().min(1)).max(10).optional().describe("Absolute file paths, max 10"),
+      clipboardImage: z.boolean().optional().describe("Attach the image currently on the clipboard (Windows)"),
+    },
     write: true,
     idempotent: false,
-    run: async ({ issueKey, body }) => {
+    run: async ({ issueKey, body = "", attachments, clipboardImage }) => {
       assertWritable(ctx, [issueKey]);
-      const res = await jira.post<{ id: string }>(`/rest/api/3/issue/${issueKey}/comment`, {
-        body: textToAdf(body),
-      });
-      return { issueKey, commentId: res.id };
+      if (!body.trim() && !attachments?.length && !clipboardImage) {
+        throw new Error("Nothing to post: pass body, attachments or clipboardImage.");
+      }
+      const files = attachments?.length ? await resolveAttachmentPaths(ctx, attachments) : [];
+      const form = new FormData();
+      for (const f of files) form.append("file", await openAsBlob(f), basename(f));
+      if (clipboardImage) {
+        const stamp = new Date().toISOString().replace(/\D/g, "").slice(0, 14);
+        form.append("file", await readClipboardPng(), `clipboard-${stamp}.png`);
+      }
+      const doc = textToAdf(body);
+      const uploaded: Array<{ id: string; filename: string }> = [];
+      if (form.has("file")) {
+        const res = await jira.post<Array<{ id: string; filename: string; mimeType: string }>>(
+          `/rest/api/3/issue/${issueKey}/attachments`,
+          form,
+        );
+        for (const a of res) {
+          uploaded.push({ id: a.id, filename: a.filename });
+          doc.content!.push(await attachmentNode(a));
+        }
+      }
+      const res = await jira.post<{ id: string }>(`/rest/api/3/issue/${issueKey}/comment`, { body: doc });
+      return { issueKey, commentId: res.id, ...(uploaded.length ? { attachments: uploaded } : {}) };
     },
   });
+
+  /** ADF media nodes reference the media-store UUID, which Jira only exposes via the content redirect. */
+  async function attachmentNode(a: { id: string; filename: string; mimeType: string }): Promise<AdfNode> {
+    const location = await jira.redirectLocation(`/rest/api/3/attachment/content/${a.id}`);
+    const uuid = /\/file\/([0-9a-f-]{36})\//i.exec(location ?? "")?.[1];
+    if (!uuid) {
+      // Fallback: still visible on the issue, linked from the comment.
+      const href = `${site}/rest/api/3/attachment/content/${a.id}`;
+      return { type: "paragraph", content: [{ type: "text", text: a.filename, marks: [{ type: "link", attrs: { href } }] }] };
+    }
+    const media: AdfNode = { type: "media", attrs: { type: "file", id: uuid, collection: "", alt: a.filename } };
+    return a.mimeType.startsWith("image/")
+      ? { type: "mediaSingle", attrs: { layout: "center" }, content: [media] }
+      : { type: "mediaGroup", content: [media] };
+  }
 
   defineTool(server, ctx, {
     name: "transition_issue",

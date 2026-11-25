@@ -33,6 +33,17 @@ export class JiraClient {
     return this.request<T>("DELETE", path, query);
   }
 
+  /** The Location a GET redirects to (e.g. attachment content -> media URL), without following it. */
+  async redirectLocation(path: string): Promise<string | undefined> {
+    const res = await fetch(this.auth.baseUrl + path, {
+      headers: await this.auth.headers(),
+      redirect: "manual",
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (res.status >= 400) throw new JiraError(res.status, formatError(res.status, await res.text()));
+    return res.headers.get("location") ?? undefined;
+  }
+
   private async request<T>(
     method: string,
     path: string,
@@ -45,14 +56,17 @@ export class JiraClient {
       if (v !== undefined) url.searchParams.set(k, String(v));
     }
 
+    // FormData = multipart upload: fetch sets the boundary, Jira requires the XSRF opt-out header.
+    const form = body instanceof FormData;
     const res = await fetch(url, {
       method,
       headers: {
         Accept: "application/json",
-        ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
+        ...(form ? { "X-Atlassian-Token": "no-check" } : {}),
+        ...(body !== undefined && !form ? { "Content-Type": "application/json" } : {}),
         ...(await this.auth.headers()),
       },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
+      body: form ? body : body !== undefined ? JSON.stringify(body) : undefined,
       signal: AbortSignal.timeout(30_000),
     });
 

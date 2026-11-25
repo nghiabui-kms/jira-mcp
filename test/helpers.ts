@@ -17,6 +17,7 @@ export interface Call {
   path: string;
   query: URLSearchParams;
   body: unknown;
+  headers: Record<string, string>;
 }
 type Route = unknown | ((call: Call) => unknown);
 
@@ -30,7 +31,8 @@ export function fakeJira(routes: Record<string, Route>): Call[] {
       method,
       path: url.pathname,
       query: url.searchParams,
-      body: init?.body ? JSON.parse(String(init.body)) : undefined,
+      body: init?.body instanceof FormData ? init.body : init?.body ? JSON.parse(String(init.body)) : undefined,
+      headers: (init?.headers ?? {}) as Record<string, string>,
     };
     calls.push(call);
     const key = `${method} ${url.pathname}`;

@@ -25,6 +25,8 @@ Giai đoạn hiện tại: **API token + chạy local + Cloudflare tunnel** đ�
 - `get_time_report`: giờ log trong khoảng ngày (tính theo time zone của tài khoản Jira), group theo author/issue/component/week/epic. Tối đa 300 issue.
 - Lịch sử (sprint, status) đọc qua `changelog/bulkfetch`; site không có API này thì gọi từng issue. Mọi chỗ gọi theo từng issue chạy tối đa 5 request song song.
 - Description/comment dùng Markdown: `#` heading, `**bold**`, `*italic*`, `` `code` ``, `[text](url)`, list (lồng 1 cấp, thụt 2 space), bảng `| a | b |`, code block, mention `@[accountId]`.
+- `add_comment` nhận thêm `attachments`: danh sách đường dẫn file trên máy chạy server (tối đa 10). File được upload lên issue; ảnh hiện ngay trong comment, file khác hiện dạng thẻ file. Chỉ đọc được file nằm trong `ATTACHMENTS_DIR` (.env); không đặt thì tính năng này tắt.
+- `add_comment` với `clipboardImage: true` đính kèm ảnh đang có trong clipboard (Windows). Dùng khi chụp màn hình (Win+Shift+S), dán vào chat Claude rồi bảo "comment ảnh này vào AUTOKAT-123": dán xong thì ảnh vẫn còn trong clipboard. Không cần `ATTACHMENTS_DIR`; `body` có thể bỏ trống. Lưu ý: server lấy ảnh **đang** có trong clipboard, nên nếu đã copy thứ khác sau khi dán thì sẽ ra ảnh khác.
 
 ## An toàn khi ghi
 

@@ -24,6 +24,8 @@ const schema = z.object({
         .filter(Boolean),
     ),
   CONFIG_FILE: z.string().default("./jira-mcp.config.json"),
+  // Folder add_comment may read attachments from; unset = attachments disabled.
+  ATTACHMENTS_DIR: z.string().optional(),
 });
 
 export type Config = z.infer<typeof schema>;
