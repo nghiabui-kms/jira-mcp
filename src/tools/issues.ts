@@ -288,7 +288,9 @@ export function registerIssueTools(server: McpServer, ctx: ToolContext): void {
       "Add a comment to an issue (plain text with simple Markdown). `attachments`: file paths on the server " +
       "(inside ATTACHMENTS_DIR) uploaded to the issue and shown in the comment, images inline. " +
       "`clipboardImage`: true attaches the image on the user's clipboard; use it when the user pasted a screenshot " +
-      "into the chat and wants it on the issue (pasting leaves it on the clipboard).",
+      "into the chat and wants it on the issue (pasting leaves it on the clipboard). " +
+      "Place a file inside the text with a line containing only {{attachment:N}} (N = 1-based position: " +
+      "`attachments` in order, then the clipboard image); files not placed go at the end.",
     input: {
       issueKey,
       body: z.string().optional().describe("Comment text; may be empty when attaching files"),
@@ -302,6 +304,11 @@ export function registerIssueTools(server: McpServer, ctx: ToolContext): void {
       if (!body.trim() && !attachments?.length && !clipboardImage) {
         throw new Error("Nothing to post: pass body, attachments or clipboardImage.");
       }
+      // Odd entries are placeholder numbers, even entries the Markdown around them.
+      const parts = body.replace(/\r\n?/g, "\n").split(/^[ \t]*\{\{attachment:(\d+)\}\}[ \t]*$/m);
+      const count = (attachments?.length ?? 0) + (clipboardImage ? 1 : 0);
+      const bad = parts.filter((p, i) => i % 2 && (+p < 1 || +p > count));
+      if (bad.length) throw new Error(`{{attachment:${bad[0]}}} has no matching file (${count} attached).`);
       const files = attachments?.length ? await resolveAttachmentPaths(ctx, attachments) : [];
       const form = new FormData();
       for (const f of files) form.append("file", await openAsBlob(f), basename(f));
@@ -309,18 +316,28 @@ export function registerIssueTools(server: McpServer, ctx: ToolContext): void {
         const stamp = new Date().toISOString().replace(/\D/g, "").slice(0, 14);
         form.append("file", await readClipboardPng(), `clipboard-${stamp}.png`);
       }
-      const doc = textToAdf(body);
       const uploaded: Array<{ id: string; filename: string }> = [];
+      const nodes: AdfNode[] = [];
       if (form.has("file")) {
+        // Jira returns the attachments in upload order, which is what {{attachment:N}} counts.
         const res = await jira.post<Array<{ id: string; filename: string; mimeType: string }>>(
           `/rest/api/3/issue/${issueKey}/attachments`,
           form,
         );
         for (const a of res) {
           uploaded.push({ id: a.id, filename: a.filename });
-          doc.content!.push(await attachmentNode(a));
+          nodes.push(await attachmentNode(a));
         }
       }
+      const placed = new Set(parts.filter((_, i) => i % 2).map(Number));
+      const doc: AdfNode = {
+        type: "doc",
+        version: 1,
+        content: [
+          ...parts.flatMap((p, i) => (i % 2 ? [nodes[+p - 1]] : textToAdf(p).content!)),
+          ...nodes.filter((_, i) => !placed.has(i + 1)),
+        ],
+      };
       const res = await jira.post<{ id: string }>(`/rest/api/3/issue/${issueKey}/comment`, { body: doc });
       return { issueKey, commentId: res.id, ...(uploaded.length ? { attachments: uploaded } : {}) };
     },

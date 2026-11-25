@@ -27,6 +27,7 @@ Giai đoạn hiện tại: **API token + chạy local + Cloudflare tunnel** đ�
 - Description/comment dùng Markdown: `#` heading, `**bold**`, `*italic*`, `` `code` ``, `[text](url)`, list (lồng 1 cấp, thụt 2 space), bảng `| a | b |`, code block, mention `@[accountId]`.
 - `add_comment` nhận thêm `attachments`: danh sách đường dẫn file trên máy chạy server (tối đa 10). File được upload lên issue; ảnh hiện ngay trong comment, file khác hiện dạng thẻ file. Chỉ đọc được file nằm trong `ATTACHMENTS_DIR` (.env); không đặt thì tính năng này tắt.
 - `add_comment` với `clipboardImage: true` đính kèm ảnh đang có trong clipboard (Windows). Dùng khi chụp màn hình (Win+Shift+S), dán vào chat Claude rồi bảo "comment ảnh này vào AUTOKAT-123": dán xong thì ảnh vẫn còn trong clipboard. Không cần `ATTACHMENTS_DIR`; `body` có thể bỏ trống. Lưu ý: server lấy ảnh **đang** có trong clipboard, nên nếu đã copy thứ khác sau khi dán thì sẽ ra ảnh khác.
+- Đặt ảnh/file vào giữa comment: viết một dòng chỉ chứa `{{attachment:N}}` trong `body` (N đếm từ 1: các file trong `attachments` theo thứ tự, rồi tới ảnh clipboard). File không được đặt chỗ thì nằm cuối comment.
 
 ## An toàn khi ghi
 

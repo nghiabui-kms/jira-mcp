@@ -317,6 +317,38 @@ describe("add_comment attachments", () => {
     expect(doc.content.map((n) => n.type)).toEqual(["mediaSingle"]);
   });
 
+  it("places attachments where {{attachment:N}} lines are, unplaced ones at the end", async () => {
+    const { dir, file } = await setup();
+    const calls = fakeJira({
+      "POST /rest/api/3/issue/AUTOKAT-1/attachments": [
+        { id: "10", filename: "run.log", mimeType: "text/plain" },
+        { id: "11", filename: "clipboard.png", mimeType: "image/png" },
+      ],
+      "GET /rest/api/3/attachment/content/10": media(U1),
+      "GET /rest/api/3/attachment/content/11": media(U2),
+      "POST /rest/api/3/issue/AUTOKAT-1/comment": { id: "500" },
+    });
+    const { call } = await connect(testContext({ config: { ATTACHMENTS_DIR: dir } }));
+    await call("add_comment", {
+      issueKey: "AUTOKAT-1",
+      body: ["Before", "  {{attachment:2}}", "After"].join("\r\n"),
+      attachments: [file("run.log")],
+      clipboardImage: true,
+    });
+    const doc = (calls.at(-1)!.body as { body: { content: Array<{ type: string; content?: Array<{ text?: string; attrs?: { id: string } }> }> } }).body;
+    expect(doc.content.map((n) => n.type)).toEqual(["paragraph", "mediaSingle", "paragraph", "mediaGroup"]);
+    expect(doc.content[0].content![0].text).toBe("Before");
+    expect(doc.content[1].content![0].attrs!.id).toBe(U2);
+    expect(doc.content[2].content![0].text).toBe("After");
+  });
+
+  it("rejects a placeholder without a matching file before uploading", async () => {
+    const calls = fakeJira({});
+    const { call } = await connect(testContext());
+    await expect(call("add_comment", { issueKey: "AUTOKAT-1", body: "x\n{{attachment:2}}", clipboardImage: true })).rejects.toThrow(/no matching file/);
+    expect(calls).toHaveLength(0);
+  });
+
   it("rejects an empty comment", async () => {
     fakeJira({});
     const { call } = await connect(testContext());
